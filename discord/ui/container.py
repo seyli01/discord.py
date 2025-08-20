@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 
     from ..components import Container as ContainerComponent
     from ..interactions import Interaction
+    from .dynamic import DynamicItem
 
 S = TypeVar('S', bound='Container', covariant=True)
 V = TypeVar('V', bound='LayoutView', covariant=True)
@@ -198,6 +199,10 @@ class Container(Item[V]):
     def _has_children(self):
         return True
 
+    def _swap_item(self, base: Item, new: DynamicItem, custom_id: str) -> None:
+        child_index = self._children.index(base)
+        self._children[child_index] = new  # type: ignore
+
     @property
     def children(self) -> List[Item[V]]:
         """List[:class:`Item`]: The children of this container."""
@@ -281,6 +286,12 @@ class Container(Item[V]):
             if child._has_children():
                 yield from child.walk_children()  # type: ignore
 
+    def content_length(self) -> int:
+        """:class:`int`: Returns the total length of all text content in this container."""
+        from .text_display import TextDisplay
+
+        return sum(len(item.content) for item in self.walk_children() if isinstance(item, TextDisplay))
+
     def add_item(self, item: Item[Any]) -> Self:
         """Adds an item to this container.
 
@@ -296,18 +307,20 @@ class Container(Item[V]):
         ------
         TypeError
             An :class:`Item` was not passed.
+        ValueError
+            Maximum number of children has been exceeded (40) for the entire view.
         """
         if not isinstance(item, Item):
             raise TypeError(f'expected Item not {item.__class__.__name__}')
 
+        if item._has_children() and self._view:
+            self._view._add_count(len(tuple(item.walk_children())))  # type: ignore
+        elif self._view:
+            self._view._add_count(1)
+
         self._children.append(item)
         item._update_view(self.view)
         item._parent = self
-
-        if item._has_children() and self._view:
-            self._view._total_children += len(tuple(item.walk_children()))  # type: ignore
-        elif self._view:
-            self._view._total_children += 1
         return self
 
     def remove_item(self, item: Item[Any]) -> Self:
@@ -327,11 +340,11 @@ class Container(Item[V]):
         except ValueError:
             pass
         else:
-            if self._view and self._view._is_layout():
+            if self._view:
                 if item._has_children():
-                    self._view._total_children -= len(tuple(item.walk_children()))  # type: ignore
+                    self._view._add_count(-len(tuple(item.walk_children())))  # type: ignore
                 else:
-                    self._view._total_children -= 1
+                    self._view._add_count(-1)
         return self
 
     def find_item(self, id: int, /) -> Optional[Item[V]]:
@@ -361,7 +374,7 @@ class Container(Item[V]):
         chaining.
         """
 
-        if self._view and self._view._is_layout():
-            self._view._total_children -= len(tuple(self.walk_children()))
+        if self._view:
+            self._view._add_count(-len(tuple(self.walk_children())))
         self._children.clear()
         return self

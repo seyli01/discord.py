@@ -21,6 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 """
+
 from __future__ import annotations
 
 from typing import (
@@ -65,10 +66,12 @@ if TYPE_CHECKING:
     from ..emoji import Emoji
     from ..components import SelectOption
     from ..interactions import Interaction
+    from .container import Container
+    from .dynamic import DynamicItem
 
     SelectCallbackDecorator = Callable[[ItemCallbackType['S', BaseSelectT]], BaseSelectT]
 
-S = TypeVar('S', bound='ActionRow', covariant=True)
+S = TypeVar('S', bound=Union['ActionRow', 'Container', 'LayoutView'], covariant=True)
 V = TypeVar('V', bound='LayoutView', covariant=True)
 
 __all__ = ('ActionRow',)
@@ -192,6 +195,10 @@ class ActionRow(Item[V]):
         # it should error anyways.
         return True
 
+    def _swap_item(self, base: Item, new: DynamicItem, custom_id: str) -> None:
+        child_index = self._children.index(base)
+        self._children[child_index] = new  # type: ignore
+
     @property
     def width(self):
         return 5
@@ -218,6 +225,12 @@ class ActionRow(Item[V]):
         for child in self.children:
             yield child
 
+    def content_length(self) -> int:
+        """:class:`int`: Returns the total length of all text content in this action row."""
+        from .text_display import TextDisplay
+
+        return sum(len(item.content) for item in self._children if isinstance(item, TextDisplay))
+
     def add_item(self, item: Item[Any]) -> Self:
         """Adds an item to this action row.
 
@@ -234,7 +247,8 @@ class ActionRow(Item[V]):
         TypeError
             An :class:`Item` was not passed.
         ValueError
-            Maximum number of children has been exceeded (5).
+            Maximum number of children has been exceeded (5)
+            or (40) for the entire view.
         """
 
         if (self._weight + item.width) > 5:
@@ -246,13 +260,13 @@ class ActionRow(Item[V]):
         if not isinstance(item, Item):
             raise TypeError(f'expected Item not {item.__class__.__name__}')
 
+        if self._view:
+            self._view._add_count(1)
+
         item._update_view(self.view)
         item._parent = self
         self._weight += 1
         self._children.append(item)
-
-        if self._view:
-            self._view._total_children += 1
 
         return self
 
@@ -273,8 +287,8 @@ class ActionRow(Item[V]):
         except ValueError:
             pass
         else:
-            if self._view and self._view._is_layout():
-                self._view._total_children -= 1
+            if self._view:
+                self._view._add_count(-1)
             self._weight -= 1
 
         return self
@@ -305,8 +319,8 @@ class ActionRow(Item[V]):
         This function returns the class instance to allow for fluent-style
         chaining.
         """
-        if self._view and self._view._is_layout():
-            self._view._total_children -= len(self._children)
+        if self._view:
+            self._view._add_count(-len(self._children))
         self._children.clear()
         self._weight = 0
         return self
@@ -339,6 +353,7 @@ class ActionRow(Item[V]):
         The function being decorated should have three parameters, ``self`` representing
         the :class:`discord.ui.ActionRow`, the :class:`discord.Interaction` you receive and
         the :class:`discord.ui.Button` being pressed.
+
         .. note::
 
             Buttons with a URL or a SKU cannot be created with this function.
@@ -397,8 +412,7 @@ class ActionRow(Item[V]):
         max_values: int = ...,
         disabled: bool = ...,
         id: Optional[int] = ...,
-    ) -> SelectCallbackDecorator[S, SelectT]:
-        ...
+    ) -> SelectCallbackDecorator[S, SelectT]: ...
 
     @overload
     def select(
@@ -414,8 +428,7 @@ class ActionRow(Item[V]):
         disabled: bool = ...,
         default_values: Sequence[ValidDefaultValues] = ...,
         id: Optional[int] = ...,
-    ) -> SelectCallbackDecorator[S, UserSelectT]:
-        ...
+    ) -> SelectCallbackDecorator[S, UserSelectT]: ...
 
     @overload
     def select(
@@ -431,8 +444,7 @@ class ActionRow(Item[V]):
         disabled: bool = ...,
         default_values: Sequence[ValidDefaultValues] = ...,
         id: Optional[int] = ...,
-    ) -> SelectCallbackDecorator[S, RoleSelectT]:
-        ...
+    ) -> SelectCallbackDecorator[S, RoleSelectT]: ...
 
     @overload
     def select(
@@ -448,8 +460,7 @@ class ActionRow(Item[V]):
         disabled: bool = ...,
         default_values: Sequence[ValidDefaultValues] = ...,
         id: Optional[int] = ...,
-    ) -> SelectCallbackDecorator[S, ChannelSelectT]:
-        ...
+    ) -> SelectCallbackDecorator[S, ChannelSelectT]: ...
 
     @overload
     def select(
@@ -465,8 +476,7 @@ class ActionRow(Item[V]):
         disabled: bool = ...,
         default_values: Sequence[ValidDefaultValues] = ...,
         id: Optional[int] = ...,
-    ) -> SelectCallbackDecorator[S, MentionableSelectT]:
-        ...
+    ) -> SelectCallbackDecorator[S, MentionableSelectT]: ...
 
     def select(
         self,
